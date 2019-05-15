@@ -264,8 +264,16 @@ rand_bytes(N) when N > 0 ->
         crypto:strong_rand_bytes(N)
     catch
         error:low_entropy ->
-            list_to_binary([ crypto:rand_uniform(0,256) || _X <- lists:seq(1, N) ])
+            list_to_binary([ rand_uniform(256) || _X <- lists:seq(1, N) ])
     end.
+
+-ifdef(rand_only).
+rand_uniform(N) ->
+    rand:uniform(N) - 1.
+-else.
+rand_uniform(N) ->
+    crypto:rand_uniform(0,N).
+-endif.
 
 %%
 %% -----------------------------------------------------------------------------
@@ -277,7 +285,7 @@ rand_bytes(N) when N > 0 ->
 -include_lib("eunit/include/eunit.hrl").
 
 encrypt_test() ->
-  IV = crypto:rand_bytes(16),
+  IV = crypto:strong_rand_bytes(16),
   Secret = crypto:hmac(md5, <<"Make It Elegant">>, []),
   << Secret15:15/binary, _/binary >> = Secret,
   Bin = <<"Transire Benefaciendo">>,
