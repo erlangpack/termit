@@ -1,6 +1,6 @@
 {application, termit, [
   {description, "Securely serialize/deserialize Erlang terms"},
-  {vsn, "0.0.1"},
+  {vsn, "1.0.0"},
   {registered, []},
   {applications, [
     kernel,
