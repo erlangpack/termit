@@ -6,5 +6,8 @@
     kernel,
     stdlib
   ]},
-  {env, []}
+  {env, []},
+  {maintainers, ["Zotonic Team"]},
+  {licenses, ["MIT"]},
+  {links, [{"GitHub", "https://github.com/erlangpack/termit"}]}
 ]}.
