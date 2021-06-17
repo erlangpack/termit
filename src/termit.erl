@@ -96,7 +96,7 @@ sign(Data, Key) ->
   Cipher :: binary().
 
 encrypt(Data, Key, IV) ->
-  Crypt = crypto:crypto_one_time(aes_cfb128, Key, IV, Data, true),
+  Crypt = crypto:crypto_one_time(aes_128_cfb128, Key, IV, Data, true),
   << IV/binary, Crypt/binary>>.
 
 -spec uncrypt(
@@ -105,7 +105,7 @@ encrypt(Data, Key, IV) ->
   Uncrypted :: binary().
 
 uncrypt(<< IV:16/binary, Data/binary >>, Key) ->
-  crypto:crypto_one_time(aes_cfb128, Key, IV, Data, false).
+  crypto:crypto_one_time(aes_128_cfb128, Key, IV, Data, false).
 
 
 %%
