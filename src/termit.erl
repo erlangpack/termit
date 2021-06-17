@@ -75,14 +75,12 @@ decode(Bin, _) when is_binary(Bin) ->
   {error, forged}.
 
 
-
--ifdef(crypto_compatibility).
 -spec key(
     Secret :: binary()) ->
   MAC16 :: binary().
 
 key(Secret) ->
-  crypto:md5_mac(Secret, []).
+  crypto:mac(hmac, md5, Secret, []).
 
 -spec sign(
     Data :: binary(),
@@ -90,40 +88,7 @@ key(Secret) ->
   MAC20 :: binary().
 
 sign(Data, Key) ->
-  crypto:sha_mac(Key, Data).
-
--spec encrypt(
-    Data :: binary(),
-    Key :: binary(),
-    IV :: binary()) ->
-  Cipher :: binary().
-
-encrypt(Data, Key, IV) ->
-  Crypt = crypto:aes_cfb_128_encrypt(Key, IV, Data),
-  << IV/binary, Crypt/binary>>.
-
--spec uncrypt(
-    Cipher :: binary(),
-    Key :: binary()) ->
-  Uncrypted :: binary().
-
-uncrypt(<< IV:16/binary, Data/binary >>, Key) ->
-  crypto:aes_cfb_128_decrypt(Key, IV, Data).
--else
--spec key(
-    Secret :: binary()) ->
-  MAC16 :: binary().
-
-key(Secret) ->
-  crypto:hmac(md5, Secret, []).
-
--spec sign(
-    Data :: binary(),
-    Secret :: binary()) ->
-  MAC20 :: binary().
-
-sign(Data, Key) ->
-  crypto:hmac(sha, Key, Data).
+  crypto:mac(hmac, sha, Key, Data).
 -spec encrypt(
     Data :: binary(),
     Key  :: binary(),
@@ -131,7 +96,7 @@ sign(Data, Key) ->
   Cipher :: binary().
 
 encrypt(Data, Key, IV) ->
-  Crypt = crypto:block_encrypt(aes_cfb128, Key, IV, Data),
+  Crypt = crypto:crypto_one_time(aes_128_cfb128, Key, IV, Data, true),
   << IV/binary, Crypt/binary>>.
 
 -spec uncrypt(
@@ -140,9 +105,8 @@ encrypt(Data, Key, IV) ->
   Uncrypted :: binary().
 
 uncrypt(<< IV:16/binary, Data/binary >>, Key) ->
-  crypto:block_decrypt(aes_cfb128, Key, IV, Data).
+  crypto:crypto_one_time(aes_128_cfb128, Key, IV, Data, false).
 
--endif.
 
 %%
 %% -----------------------------------------------------------------------------
@@ -286,7 +250,7 @@ rand_uniform(N) ->
 
 encrypt_test() ->
   IV = crypto:strong_rand_bytes(16),
-  Secret = crypto:hmac(md5, <<"Make It Elegant">>, []),
+  Secret = crypto:mac(hmac, md5, <<"Make It Elegant">>, []),
   << Secret15:15/binary, _/binary >> = Secret,
   Bin = <<"Transire Benefaciendo">>,
   ?assertEqual(Bin, uncrypt(encrypt(Bin, Secret, IV), Secret)),

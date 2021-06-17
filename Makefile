@@ -1,29 +1,31 @@
-all: deps compile check test
+ERL ?= erl
+REBAR := ./rebar3
+REBAR_URL := https://s3.amazonaws.com/rebar3/rebar3
 
-deps:
-	rebar get-deps
+.PHONY: all compile check test clean
+
+all: ./rebar3 compile check test
+
+$(REBAR):
+	$(ERL) -noshell -s inets -s ssl \
+	  -eval '{ok, saved_to_file} = httpc:request(get, {"$(REBAR_URL)", []}, [{ssl, [ {verify, verify_none} ]}], [{stream, "$(REBAR)"}])' \
+	  -s init stop
+	chmod +x $(REBAR)
 
 compile:
-	rebar compile
-
-run: compile
-	sh start.sh
+	$(REBAR) compile
 
 clean:
-	rebar clean
-	rm -fr ebin .ct test/*.beam
+	$(REBAR) clean
 
 check:
-	rebar eunit skip_deps=true
+	$(REBAR) eunit
 
-test: deps compile check
-	#rebar ct
-	mkdir -p .ct
-	ct_run -dir test -logdir .ct -pa ebin
+test: compile check
+	$(REBAR) ct
 
-dist: deps compile
-	echo TODO
+dialyzer:
+	$(REBAR) dialyzer
 
-.PHONY: all deps compile check test run clean dist
-.SILENT:
-
+xref:
+	$(REBAR) xref
