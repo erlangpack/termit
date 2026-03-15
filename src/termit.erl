@@ -160,8 +160,7 @@ decode_base64(Bin, Secret) when is_binary(Bin) ->
   integer().
 
 timestamp(Delta) when is_integer(Delta) ->
-  {MegaSecs, Secs, _} = os:timestamp(),
-  MegaSecs * 1000000 + Secs + Delta.
+  erlang:system_time(second) + Delta.
 
 expiring(Term, Ttl) ->
   expires_by(Term, timestamp(Ttl)).
