@@ -19,27 +19,14 @@
     expiring/2,
     issue_token/2,
     issue_token/3,
-    verify_token/2
+    verify_token/2,
+
+    rand_bytes/1
   ]).
 
-%%
-%% -----------------------------------------------------------------------------
-%% @doc Serialize Term, encrypt and sign the result with Secret.
-%% Return binary().
-%% -----------------------------------------------------------------------------
-%%
-
--spec encode(
-    Term :: any(),
-    Secret :: binary()) ->
-  Cipher :: binary().
-
-encode(Term, Secret) ->
-  Key = key(Secret),
-  Enc = encrypt(term_to_binary(Term, [compressed, {minor_version, 1}]),
-                Key, rand_bytes(16)),
-  << (sign(Enc, Key))/binary, Enc/binary >>.
-
+-define(VERSION, 2).
+-define(IV_SIZE, 12).
+-define(TAG_SIZE, 16).
 
 %%
 %% -----------------------------------------------------------------------------
@@ -55,80 +42,37 @@ encode(Term, Secret) ->
   {error, forged} |
   {error, badarg}.
 
-decode(<< Sig:20/binary, Enc/binary >>, Secret) ->
-  Key = key(Secret),
-  % NB constant time signature verification
-  case equal(Sig, sign(Enc, Key)) of
-    true ->
-      % deserialize
-      try binary_to_term(uncrypt(Enc, Key), [safe]) of
-        Term -> {ok, Term}
-      catch _:_ ->
-        {error, badarg}
-      end;
-    false ->
-      {error, forged}
-  end;
-
+decode(<<?VERSION:8, IV:12/binary, Tag:16/binary, Ciphertext/binary>>, Secret) ->
+    EncKey = key(Secret),
+    case crypto:crypto_one_time_aead(aes_256_gcm, EncKey, IV, Ciphertext, <<?VERSION:8>>, Tag, false) of
+        Plaintext when is_binary(Plaintext) ->
+            try binary_to_term(Plaintext, [safe]) of
+                Term ->
+                    {ok, Term}
+            catch error:badarg ->
+                      {error, badarg}
+            end;
+        error ->
+            {error, invalid_token}
+    end;
 %% N.B. unmatched binaries are forged
 decode(Bin, _) when is_binary(Bin) ->
   {error, forged}.
 
-
--spec key(
+-spec encode(
+    Term :: any(),
     Secret :: binary()) ->
-  MAC16 :: binary().
-
-key(Secret) ->
-  crypto:mac(hmac, md5, Secret, []).
-
--spec sign(
-    Data :: binary(),
-    Secret :: binary()) ->
-  MAC20 :: binary().
-
-sign(Data, Key) ->
-  crypto:mac(hmac, sha, Key, Data).
--spec encrypt(
-    Data :: binary(),
-    Key  :: binary(),
-    IV  :: binary()) ->
   Cipher :: binary().
 
-encrypt(Data, Key, IV) ->
-  Crypt = crypto:crypto_one_time(aes_128_cfb128, Key, IV, Data, true),
-  << IV/binary, Crypt/binary>>.
+encode(Term, Secret) ->
+    Key = key(Secret),
+    IV = rand_bytes(?IV_SIZE),
+    Plaintext = term_to_binary(Term, [compressed, {minor_version, 1}]),
+    {Ciphertext, Tag} = crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, Plaintext, <<?VERSION:8>>, ?TAG_SIZE, true),
+    <<?VERSION:8, IV/binary, Tag/binary, Ciphertext/binary>>.
 
--spec uncrypt(
-    Cipher :: binary(),
-    Key :: binary()) ->
-  Uncrypted :: binary().
-
-uncrypt(<< IV:16/binary, Data/binary >>, Key) ->
-  crypto:crypto_one_time(aes_128_cfb128, Key, IV, Data, false).
-
-
-%%
-%% -----------------------------------------------------------------------------
-%% 'Constant' time =:= operator for binaries, to mitigate timing attacks
-%% -----------------------------------------------------------------------------
-%%
-
--spec equal(
-    A :: binary(),
-    B :: binary()) ->
-  true |
-  false.
-
-equal(A, B) ->
-  equal(A, B, 0).
-
-equal(<< A, As/binary >>, << B, Bs/binary >>, Acc) ->
-  equal(As, Bs, Acc bor (A bxor B));
-equal(<<>>, <<>>, 0) ->
-  true;
-equal(_As, _Bs, _Acc) ->
-  false.
+key(Secret) ->
+    crypto:mac(hmac, sha256, Secret, <<"termit-enc-v2">>).
 
 %%
 %% -----------------------------------------------------------------------------
@@ -230,13 +174,8 @@ rand_bytes(N) when N > 0 ->
             list_to_binary([ rand_uniform(256) || _X <- lists:seq(1, N) ])
     end.
 
--ifdef(rand_only).
 rand_uniform(N) ->
     rand:uniform(N) - 1.
--else.
-rand_uniform(N) ->
-    crypto:rand_uniform(0,N).
--endif.
 
 %%
 %% -----------------------------------------------------------------------------
@@ -247,21 +186,6 @@ rand_uniform(N) ->
 -ifdef(TEST).
 -include_lib("eunit/include/eunit.hrl").
 
-encrypt_test() ->
-  IV = crypto:strong_rand_bytes(16),
-  Secret = crypto:mac(hmac, md5, <<"Make It Elegant">>, []),
-  << Secret15:15/binary, _/binary >> = Secret,
-  Bin = <<"Transire Benefaciendo">>,
-  ?assertEqual(Bin, uncrypt(encrypt(Bin, Secret, IV), Secret)),
-  ?assertNotEqual(Bin,
-      uncrypt(encrypt(Bin, Secret, IV), <<Secret15/binary, "1">>)),
-  ?assertNotEqual(Bin,
-      uncrypt(encrypt(Bin, Secret, IV), <<"0", Secret15/binary>>)),
-  ?assertNotEqual(Bin,
-      uncrypt(encrypt(Bin, <<Secret15/binary, "1">>, IV), Secret)),
-  ?assertNotEqual(Bin,
-      uncrypt(encrypt(Bin, <<"0", Secret15/binary>>, IV), Secret)).
-
 smoke_test() ->
   Term = {a, b, c, [d, "e", <<"foo">>]},
   Secret = <<"TopSecRet">>,
@@ -270,7 +194,7 @@ smoke_test() ->
   % forged data
   ?assertEqual({error, forged}, decode(<<"1">>, Secret)),
   ?assertEqual({error, forged}, decode(<<"0", Enc/binary>>, Secret)),
-  ?assertEqual({error, forged}, decode(<<Enc/binary, "1">>, Secret)).
+  ?assertEqual({error, invalid_token}, decode(<<Enc/binary, "1">>, Secret)).
 
 expiry_test() ->
   Term = {a, b, c, [d, "e", <<"foo">>]},
@@ -300,7 +224,7 @@ token_test() ->
   Secret = <<"TopSecRet">>,
   ?assertEqual({ok, Term},
       verify_token(issue_token(Term, Secret, 10), Secret)),
-  ?assertEqual({error, forged},
+  ?assertEqual({error, invalid_token},
       verify_token(issue_token(Term, Secret, 10), << Secret/binary, "1" >>)),
   ?assertEqual({ok, Term},
       verify_token(encode_base64(Term, Secret), Secret)),
