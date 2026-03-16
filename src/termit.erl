@@ -19,12 +19,10 @@
     expiring/2,
     issue_token/2,
     issue_token/3,
-    verify_token/2,
-
-    rand_bytes/1
+    verify_token/2
   ]).
 
--define(VERSION, 2).
+-define(MAGIC_V2, "TRM2").
 -define(IV_SIZE, 12).
 -define(TAG_SIZE, 16).
 
@@ -42,9 +40,9 @@
   {error, forged} |
   {error, badarg}.
 
-decode(<<?VERSION:8, IV:12/binary, Tag:16/binary, Ciphertext/binary>>, Secret) ->
+decode(<<?MAGIC_V2, IV:12/binary, Tag:16/binary, Ciphertext/binary>>, Secret) ->
     EncKey = key(Secret),
-    case crypto:crypto_one_time_aead(aes_256_gcm, EncKey, IV, Ciphertext, <<?VERSION:8>>, Tag, false) of
+    case crypto:crypto_one_time_aead(aes_256_gcm, EncKey, IV, Ciphertext, <<?MAGIC_V2>>, Tag, false) of
         Plaintext when is_binary(Plaintext) ->
             try binary_to_term(Plaintext, [safe]) of
                 Term ->
@@ -68,8 +66,8 @@ encode(Term, Secret) ->
     Key = key(Secret),
     IV = rand_bytes(?IV_SIZE),
     Plaintext = term_to_binary(Term, [compressed, {minor_version, 1}]),
-    {Ciphertext, Tag} = crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, Plaintext, <<?VERSION:8>>, ?TAG_SIZE, true),
-    <<?VERSION:8, IV/binary, Tag/binary, Ciphertext/binary>>.
+    {Ciphertext, Tag} = crypto:crypto_one_time_aead(aes_256_gcm, Key, IV, Plaintext, <<?MAGIC_V2>>, ?TAG_SIZE, true),
+    <<?MAGIC_V2, IV/binary, Tag/binary, Ciphertext/binary>>.
 
 key(Secret) ->
     crypto:mac(hmac, sha256, Secret, <<"termit-enc-v2">>).
@@ -87,8 +85,10 @@ decode_base64(undefined, _) ->
   {error, forged};
 decode_base64(Bin, Secret) when is_binary(Bin) ->
   try termit_base64url:decode(Bin) of
-    Decoded ->
-      decode(Decoded, Secret)
+      <<?MAGIC_V2, _/binary>> = Decoded ->
+          decode(Decoded, Secret);
+      PossibleOldtoken ->
+          termit_v1:decode(PossibleOldtoken, Secret)
   catch _:_ ->
     {error, forged}
   end.
